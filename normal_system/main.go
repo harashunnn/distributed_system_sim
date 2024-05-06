@@ -61,7 +61,7 @@ func server(id string, command <-chan Command, msgIn <-chan Message, msgOut chan
 
 func processLocalCommand(id string, cmd Command, clock *int, queue *[]ClockCommand, msgOut chan<- Message) {
 	//自分のクロックと命令をキューに入れ、クロックをインクリメント
-	recordCommand(cmd, clock, queue)
+	recordCommand(id, cmd, clock, queue)
 	//自分のクロックを付与してメッセージを送信し、クロックをインクリメント
 	sendMessage(id, cmd, clock, msgOut)
 }
@@ -70,12 +70,12 @@ func processReceivedMessage(id string, msg Message, clock *int, queue *[]ClockCo
 	//元々自分が保有していたクロックか、メッセージのクロックの大きい方に1を足したものを自分のクロックにする
 	updateClock(msg.Clock, clock)
 	//自分のクロックと命令をキューに入れ、クロックをインクリメント
-	recordCommand(msg.Command, clock, queue)
+	recordCommand(id, msg.Command, clock, queue)
 }
 
-func recordCommand(cmd Command, clock *int, queue *[]ClockCommand) {
+func recordCommand(id string, cmd Command, clock *int, queue *[]ClockCommand) {
 	*queue = append(*queue, ClockCommand{Command: cmd, Clock: *clock})
-	fmt.Printf("Processed command %s %d at clock %d\n", cmd.Type, cmd.Value, *clock)
+	fmt.Printf("%s received command %s %d, at clock %d\n", id, cmd.Type, cmd.Value, *clock)
 	*clock++
 }
 
@@ -123,10 +123,10 @@ func processQueueCommands(state *int, queue []ClockCommand) {
 }
 
 func main() {
-	nodeA := make(chan Command, 5)
-	nodeB := make(chan Command, 5)
-	msgAtoB := make(chan Message, 5)
-	msgBtoA := make(chan Message, 5)
+	nodeA := make(chan Command, 10)
+	nodeB := make(chan Command, 10)
+	msgAtoB := make(chan Message, 10)
+	msgBtoA := make(chan Message, 10)
 	queueOutA := make(chan []ClockCommand, 1)
 	queueOutB := make(chan []ClockCommand, 1)
 
