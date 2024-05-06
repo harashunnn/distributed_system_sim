@@ -41,11 +41,11 @@ func server(id string, command <-chan Command, msgIn <-chan Message, msgOut chan
 		select {
 		//ユーザから命令を受信したら
 		case cmd := <-command:
+			mutex.Lock()
 			if cmd.isTerminate() {
 				terminate = true
 				break
 			}
-			mutex.Lock()
 			processLocalCommand(id, cmd, &clock, &queue, msgOut)
 			mutex.Unlock()
 		//ノードからメッセージを受信したら
