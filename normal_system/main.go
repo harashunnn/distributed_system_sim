@@ -13,6 +13,11 @@ type Command struct {
 	Value int
 }
 
+// ノードを終了する
+func (cmd Command) isTerminate() bool {
+	return cmd.Type == "terminate"
+}
+
 // コマンドとクロックを同時に保管するときの構造体
 type ClockCommand struct {
 	Command Command
@@ -29,73 +34,92 @@ func server(id string, command <-chan Command, msgIn <-chan Message, msgOut chan
 	var queue []ClockCommand
 	clock := 0
 	mutex := &sync.Mutex{}
-
-	//終了させるトリガ変数
+	//終了させるトリガ
 	terminate := false
 
 	for !terminate {
 		select {
+		//ユーザから命令を受信したら
 		case cmd := <-command:
-			mutex.Lock()
-			if cmd.Type == "terminate" { //終了させるコマンド
+			if cmd.isTerminate() {
 				terminate = true
-				mutex.Unlock()
 				break
 			}
-
-			//自分のクロックと命令をキューに入れ、クロックをインクリメント
-			ClockCmd := ClockCommand{Command: cmd, Clock: clock}
-			queue = append(queue, ClockCmd)
-			fmt.Printf("%s received command %s %d, own clock to %d\n", id, cmd.Type, cmd.Value, clock)
-			clock++
-
-			//自分のクロックを付与してメッセージを送信し、クロックをインクリメント
-			msgOut <- Message{Clock: clock, Command: cmd}
-			fmt.Printf("%s send message %s %d, own clock to %d\n", id, cmd.Type, cmd.Value, clock)
-			clock++
-
+			mutex.Lock()
+			processLocalCommand(id, cmd, &clock, &queue, msgOut)
 			mutex.Unlock()
+		//ノードからメッセージを受信したら
 		case msg := <-msgIn:
 			mutex.Lock()
-			//元々自分が保有していたクロックか、メッセージのクロックの大きい方に1を足したものを自分のクロックにする
-			if msg.Clock > clock {
-				clock = msg.Clock + 1
-			} else {
-				clock++
-			}
-			ClockCmd := ClockCommand{Command: msg.Command, Clock: clock}
-			queue = append(queue, ClockCmd)
-
-			fmt.Printf("%s received message from other node with clock %d, own clock to %d\n", id, msg.Clock, clock)
-			clock++
+			processReceivedMessage(id, msg, &clock, &queue)
 			mutex.Unlock()
 		}
 	}
+	//キューの情報を元に、命令を実行する
+	finalizeQueue(id, queue, state, queueOut)
+}
 
+func processLocalCommand(id string, cmd Command, clock *int, queue *[]ClockCommand, msgOut chan<- Message) {
+	//自分のクロックと命令をキューに入れ、クロックをインクリメント
+	recordCommand(cmd, clock, queue)
+	//自分のクロックを付与してメッセージを送信し、クロックをインクリメント
+	sendMessage(id, cmd, clock, msgOut)
+}
+
+func processReceivedMessage(id string, msg Message, clock *int, queue *[]ClockCommand) {
+	//元々自分が保有していたクロックか、メッセージのクロックの大きい方に1を足したものを自分のクロックにする
+	updateClock(msg.Clock, clock)
+	//自分のクロックと命令をキューに入れ、クロックをインクリメント
+	recordCommand(msg.Command, clock, queue)
+}
+
+func recordCommand(cmd Command, clock *int, queue *[]ClockCommand) {
+	*queue = append(*queue, ClockCommand{Command: cmd, Clock: *clock})
+	fmt.Printf("Processed command %s %d at clock %d\n", cmd.Type, cmd.Value, *clock)
+	*clock++
+}
+
+func sendMessage(id string, cmd Command, clock *int, msgOut chan<- Message) {
+	msgOut <- Message{Clock: *clock, Command: cmd}
+	fmt.Printf("%s sent message %s %d at clock %d\n", id, cmd.Type, cmd.Value, *clock)
+	*clock++
+}
+
+func updateClock(receivedClock int, clock *int) {
+	if receivedClock > *clock {
+		*clock = receivedClock + 1
+	} else {
+		*clock++
+	}
+}
+
+func finalizeQueue(id string, queue []ClockCommand, state int, queueOut chan<- []ClockCommand) {
 	// queueを、クロックについて昇順でソートする
 	sort.Slice(queue, func(i, j int) bool {
 		return queue[i].Clock < queue[j].Clock
 	})
+	processQueueCommands(&state, queue)
+	fmt.Printf("%s final state %d\n", id, state)
+	queueOut <- queue
+}
 
+func processQueueCommands(state *int, queue []ClockCommand) {
 	// 状態とコマンドの出現回数を記録するマップ
 	commandCount := make(map[Command]int)
 
-	for _, queue_c := range queue {
+	for _, cc := range queue {
 		// コマンドの出現回数を更新
-		commandCount[queue_c.Command]++
-		// このコマンドが2回目に出現した場合
-		if commandCount[queue_c.Command] == 2 {
-			// コマンドタイプに応じて処理を実行する
-			if queue_c.Command.Type == "multiply" {
-				state *= queue_c.Command.Value
-			} else if queue_c.Command.Type == "add" {
-				state += queue_c.Command.Value
+		commandCount[cc.Command]++
+		// このコマンドが2回目に出現した時
+		// Command.Typeに応じて処理を実行する
+		if commandCount[cc.Command] == 2 {
+			if cc.Command.Type == "multiply" {
+				*state *= cc.Command.Value
+			} else if cc.Command.Type == "add" {
+				*state += cc.Command.Value
 			}
 		}
 	}
-
-	fmt.Printf("%s state to %d\n", id, state)
-	queueOut <- queue //キューの内容を出力する
 }
 
 func main() {
